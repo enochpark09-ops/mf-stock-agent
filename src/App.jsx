@@ -15,12 +15,21 @@ const T = {
 // ── Claude API ────────────────────────────────────────────────
 const callClaude = async (messages, system, max_tokens = 2000) => {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("API_KEY_MISSING");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(apiKey ? { "x-api-key": apiKey } : {}) },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens, system, messages }),
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({ model: "claude-sonnet-4-5-20250929", max_tokens, system, messages }),
   });
-  if (!res.ok) throw new Error("API Error");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+  }
   const data = await res.json();
   return data.content?.[0]?.text || "";
 };
