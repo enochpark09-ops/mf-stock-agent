@@ -150,7 +150,14 @@ const MFAnalysisTab = () => {
     try {
       const r = await callClaude([{ role: "user", content: prompt }], MF_SYSTEM, 1500);
       setResult(r);
-    } catch { setResult("분석 오류. 다시 시도해 주세요."); }
+    } catch(e) {
+      const msg = e?.message || "알 수 없는 오류";
+      if (msg === "API_KEY_MISSING") {
+        setResult("❌ API 키 없음. Vercel 환경변수 VITE_ANTHROPIC_API_KEY 확인 필요.");
+      } else {
+        setResult("❌ 오류: " + msg);
+      }
+    }
     setLoading(false);
   };
 
@@ -374,7 +381,14 @@ ${market !== "US" ? "3. 한국 AI반도체 시황 (삼성전자·SK하이닉스�
     try {
       const r = await callClaude([{ role: "user", content: prompt }], BRIEFING_SYSTEM, 2000);
       setBriefing(r);
-    } catch { setBriefing("브리핑 생성 오류. 다시 시도해 주세요."); }
+    } catch(e) {
+      const msg = e?.message || "알 수 없는 오류";
+      if (msg === "API_KEY_MISSING") {
+        setBriefing("❌ API 키가 없습니다. Vercel 환경변수 VITE_ANTHROPIC_API_KEY를 확인해주세요.");
+      } else {
+        setBriefing("❌ 오류: " + msg);
+      }
+    }
     setLoading(false);
   };
 
@@ -504,7 +518,10 @@ MF 3단계 분석(방향성→딛는자리→리스크)을 포함한 포스팅 �
     try {
       const r = await callClaude([{ role: "user", content: prompt }], POST_SYSTEM, 2000);
       setPost(r);
-    } catch { setPost("포스팅 생성 오류. 다시 시도해 주세요."); }
+    } catch(e) {
+      const msg = e?.message || "알 수 없는 오류";
+      setPost("❌ 오류: " + msg + (msg === "API_KEY_MISSING" ? " → Vercel 환경변수 확인 필요" : ""));
+    }
     setLoading(false);
   };
 
@@ -627,7 +644,7 @@ const WatchlistTab = () => {
       const r = await callClaude([{ role: "user", content: `${item.ticker} (${item.market === "KR" ? "한국" : "미국"}) 종목에 대해 AI반도체 투자자 관점에서 이번 주 주목 이유와 MF 매매 전략을 3가지로 간결하게 설명해주세요. 메모: ${item.memo || "없음"}` }],
         MF_SYSTEM, 600);
       setAiNote(r);
-    } catch { setAiNote("AI 노트 로드 실패"); }
+    } catch(e) { setAiNote("❌ AI 오류: " + (e?.message || "실패")); }
     setAiLoading(false);
   };
 
