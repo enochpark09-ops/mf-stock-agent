@@ -13,18 +13,25 @@ const T = {
 };
 
 // ── Claude API ────────────────────────────────────────────────
-const callClaude = async (messages, system, max_tokens = 2000) => {
+const MODEL = "claude-sonnet-4-5-20250929";
+const getHeaders = () => {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("API_KEY_MISSING");
+  return {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+    "anthropic-dangerous-direct-browser-access": "true",
+  };
+};
+
+// 일반 호출 (웹검색 없음)
+const callClaude = async (messages, system, max_tokens = 2000) => {
+  const headers = getHeaders();
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({ model: "claude-sonnet-4-5-20250929", max_tokens, system, messages }),
+    headers,
+    body: JSON.stringify({ model: MODEL, max_tokens, system, messages }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -32,6 +39,61 @@ const callClaude = async (messages, system, max_tokens = 2000) => {
   }
   const data = await res.json();
   return data.content?.[0]?.text || "";
+};
+
+// 웹검색 포함 호출 (시황·포스팅용)
+const callClaudeWithSearch = async (messages, system, max_tokens = 4000) => {
+  const headers = getHeaders();
+  let currentMessages = [...messages];
+  let iterations = 0;
+
+  while (iterations < 6) {
+    iterations++;
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens,
+        system,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+        messages: currentMessages,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+
+    // 텍스트 응답이 나오면 종료
+    if (data.stop_reason === "end_turn") {
+      const textBlock = data.content?.find(b => b.type === "text");
+      return textBlock?.text || "";
+    }
+
+    // tool_use: 검색 결과를 다음 메시지로 전달
+    if (data.stop_reason === "tool_use") {
+      const toolUses = data.content.filter(b => b.type === "tool_use");
+      const toolResults = toolUses.map(tu => ({
+        type: "tool_result",
+        tool_use_id: tu.id,
+        content: "검색이 실행되었습니다. 검색 결과를 바탕으로 분석을 계속하세요.",
+      }));
+      currentMessages = [
+        ...currentMessages,
+        { role: "assistant", content: data.content },
+        { role: "user", content: toolResults },
+      ];
+      continue;
+    }
+
+    // 그 외 상황에서 텍스트 추출 시도
+    const textBlock = data.content?.find(b => b.type === "text");
+    if (textBlock?.text) return textBlock.text;
+    break;
+  }
+  throw new Error("웹 검색 응답 처리 실패");
 };
 
 // ── MF 분석 시스템 프롬프트 ─────────────────────────────────────
