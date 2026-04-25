@@ -96,6 +96,62 @@ const callClaudeWithSearch = async (messages, system, max_tokens = 4000) => {
   throw new Error("웹 검색 응답 처리 실패");
 };
 
+// ── 차트 이미지 분석 함수 ──────────────────────────────────────
+const analyzeChartImage = async (base64Image, mediaType, ticker, currentPrice) => {
+  const headers = getHeaders();
+  const prompt = `이 차트 이미지는 ${ticker || "종목"} 일봉 차트입니다.
+현재가: ${currentPrice || "확인 필요"}원
+
+MF(MoveFutures) 분석을 위해 차트에서 다음을 읽어주세요:
+
+1. 장기 추세 (3~6개월): 고점·저점 방향, 이평선 배열 상태
+2. 단기 추세 (최근 1~2주): 방향 및 상태
+3. 최근 저점 가격 (가장 최근 눌린 가격)
+4. 직전 고점 가격 (저점 이전 가장 높았던 가격)
+5. 저점 지지 터치 횟수 (그 가격대에서 몇 번 반등했는지)
+6. 최근 캔들 패턴 (오늘/최근 봉이 양봉인지 음봉인지, 반전갭·장악형 여부)
+7. 1차 목표가 추정 (다음 저항선)
+8. 손절선 추정 (저점 아래)
+
+반드시 아래 JSON 형식으로만 답하세요. 다른 텍스트 없이 JSON만:
+{
+  "trend_long": "장기 추세 설명",
+  "trend_short": "단기 추세 설명",
+  "support_price": "저점 가격 (숫자만, 예: 165700)",
+  "high_price": "고점 가격 (숫자만, 예: 228500)",
+  "support_touch": "터치 횟수 (숫자만, 예: 2)",
+  "risk_type": "타점 패턴 (상승 반전갭/상승 장악형/하락 반전갭/하락 장악형/타점 미형성 중 하나)",
+  "target1": "1차 목표가 (숫자만)",
+  "stoploss": "손절선 (숫자만)",
+  "summary": "차트 전반적 특징 한 줄 요약"
+}`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 1000,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
+          { type: "text", text: prompt }
+        ]
+      }]
+    })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  const text = data.content?.[0]?.text || "";
+  // JSON 파싱
+  const clean = text.replace(/```json|```/g, "").trim();
+  return JSON.parse(clean);
+};
+
 // ── MF 분석 시스템 프롬프트 ─────────────────────────────────────
 const MF_SYSTEM = `당신은 MoveFutures(MF) 주식선물 분석 전문가입니다.
 MF 교육 기준에 따라 분석합니다:
@@ -165,22 +221,78 @@ const BottomTab = ({ active, onClick, icon, label }) => (
 // ══════════════════════════════════════════════════════════════
 const MFAnalysisTab = () => {
   const [ticker, setTicker] = useState("");
-  const [market, setMarket] = useState("KR"); // KR | US
+  const [market, setMarket] = useState("KR");
   const [form, setForm] = useState({
-    // 방향성
     trend_long: "", trend_short: "",
-    // 딛는자리
     support_price: "", support_fibo: "", support_touch: "",
-    // 리스크
     risk_type: "", target1: "", stoploss: "",
-    // 현재가
-    current_price: "",
-    // 추가 메모
-    memo: "",
+    current_price: "", memo: "",
   });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // ── 차트 이미지 자동 분석 ────────────────────────────────────
+  const [chartImg, setChartImg] = useState(null);
+  const [imgLoading, setImgLoading] = useState(false);
+  const [imgStatus, setImgStatus] = useState("");
+  const fileRef = useRef(null);
+
+  const calcFibo = (high, low, current) => {
+    const range = high - low;
+    if (range <= 0) return "";
+    const ratio = (high - current) / range;
+    if (ratio <= 0.382) return `${ratio.toFixed(3)} (0~0.382 구간 ✅)`;
+    if (ratio <= 0.5)   return `${ratio.toFixed(3)} (0.382~0.5 구간 ✅)`;
+    if (ratio <= 0.618) return `${ratio.toFixed(3)} (0.5~0.618 구간 ⚠️)`;
+    return `${ratio.toFixed(3)} (0.618 초과 ❌)`;
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(",")[1];
+      const mediaType = file.type || "image/png";
+      setChartImg({ base64, mediaType, preview: ev.target.result });
+      setImgStatus("📷 이미지 준비 완료 — 아래 버튼을 눌러 자동 분석하세요");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const autoAnalyze = async () => {
+    if (!chartImg) return;
+    setImgLoading(true);
+    setImgStatus("🔍 차트 분석 중... (10~20초 소요)");
+    try {
+      const parsed = await analyzeChartImage(
+        chartImg.base64, chartImg.mediaType,
+        ticker, form.current_price
+      );
+      const high = parseFloat(parsed.high_price);
+      const low  = parseFloat(parsed.support_price);
+      const cur  = parseFloat(form.current_price) || ((high + low) / 2);
+      const fiboStr = (!isNaN(high) && !isNaN(low) && !isNaN(cur))
+        ? calcFibo(high, low, cur) : "";
+      setForm(prev => ({
+        ...prev,
+        trend_long:    parsed.trend_long    || prev.trend_long,
+        trend_short:   parsed.trend_short   || prev.trend_short,
+        support_price: parsed.support_price || prev.support_price,
+        support_fibo:  fiboStr              || prev.support_fibo,
+        support_touch: parsed.support_touch || prev.support_touch,
+        risk_type:     parsed.risk_type     || prev.risk_type,
+        target1:       parsed.target1       || prev.target1,
+        stoploss:      parsed.stoploss      || prev.stoploss,
+        memo:          parsed.summary ? `[차트 분석] ${parsed.summary}` : prev.memo,
+      }));
+      setImgStatus("✅ 자동 입력 완료! 내용 확인 후 수정하세요.");
+    } catch(e) {
+      setImgStatus(`❌ 분석 실패: ${e.message}`);
+    }
+    setImgLoading(false);
+  };
 
   const analyze = async () => {
     if (!ticker) return;
@@ -244,6 +356,64 @@ const MFAnalysisTab = () => {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+
+        {/* 차트 이미지 업로드 */}
+        <div style={{ background: T.surface, borderRadius: 12, padding: 14, marginBottom: 12, border: `1px solid ${T.border}` }}>
+          <div style={{ fontSize: 10, color: T.green, fontWeight: 700, letterSpacing: 1.2, marginBottom: 10 }}>📷 차트 이미지 자동 분석</div>
+          <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 10, lineHeight: 1.6 }}>
+            영웅문 일봉 차트를 캡처해서 올리면<br/>
+            STEP 1·2·3 입력값을 자동으로 채워드려요!
+          </div>
+
+          {/* 업로드 영역 */}
+          <input ref={fileRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display:"none" }}/>
+          <button onClick={() => fileRef.current?.click()} style={{
+            width: "100%", padding: "14px 0", marginBottom: 10,
+            background: chartImg ? T.greenDim : "transparent",
+            border: `2px dashed ${chartImg ? T.green : T.border}`,
+            borderRadius: 10, color: chartImg ? T.green : T.textMuted,
+            cursor: "pointer", fontSize: 13, fontFamily: "inherit",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}>
+            {chartImg
+              ? <><Ic n="check" s={16}/>차트 이미지 선택됨 (다시 선택하려면 클릭)</>
+              : <><Ic n="chart" s={16}/>차트 이미지 선택 (캡처 파일 업로드)</>
+            }
+          </button>
+
+          {/* 이미지 미리보기 */}
+          {chartImg?.preview && (
+            <div style={{ marginBottom: 10, borderRadius: 8, overflow: "hidden", border: `1px solid ${T.border}` }}>
+              <img src={chartImg.preview} alt="차트" style={{ width: "100%", display: "block", maxHeight: 200, objectFit: "cover" }}/>
+            </div>
+          )}
+
+          {/* 자동 분석 버튼 */}
+          <button onClick={autoAnalyze} disabled={!chartImg || imgLoading} style={{
+            width: "100%", padding: "12px 0",
+            background: chartImg && !imgLoading ? `linear-gradient(135deg, #006644, ${T.green})` : T.border,
+            border: "none", borderRadius: 10,
+            color: chartImg && !imgLoading ? "#001a11" : T.textDim,
+            fontSize: 14, fontWeight: 800, cursor: chartImg && !imgLoading ? "pointer" : "not-allowed",
+            fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}>
+            {imgLoading
+              ? <><div style={{ animation:"spin 1s linear infinite" }}><Ic n="spin" s={15}/></div>차트 분석 중...</>
+              : <><Ic n="search" s={15}/>차트 자동 분석 → 입력값 채우기</>
+            }
+          </button>
+
+          {/* 상태 메시지 */}
+          {imgStatus && (
+            <div style={{
+              marginTop: 10, padding: "9px 12px", borderRadius: 8, fontSize: 12,
+              background: imgStatus.startsWith("✅") ? T.greenDim : imgStatus.startsWith("❌") ? T.redDim : T.blueDim,
+              color: imgStatus.startsWith("✅") ? T.green : imgStatus.startsWith("❌") ? T.red : T.blue,
+              border: `1px solid ${imgStatus.startsWith("✅") ? T.greenMid : imgStatus.startsWith("❌") ? T.red+"44" : T.blue+"44"}`,
+              lineHeight: 1.6,
+            }}>{imgStatus}</div>
+          )}
+        </div>
 
         {/* 종목 선택 */}
         <div style={{ background: T.surface, borderRadius: 12, padding: 14, marginBottom: 12, border: `1px solid ${T.border}` }}>
