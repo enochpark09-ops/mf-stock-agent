@@ -958,24 +958,23 @@ JSON 형식으로만 응답하세요.`;
 
   const copyAll = () => {
     if (!result) return;
+    const nl = "\n";
     const text = result.themes?.map(t =>
-      `[${t.icon} ${t.theme}]
-근거: ${t.reason}
-출처: ${t.source}
-` +
-      t.stocks.map((s, i) => `${i+1}. ${s.name} (${s.code})
-   └ ${s.reason}
-   └ MF: ${s.mf_point}
-   └ ⚠️ ${s.caution}`).join("
-")
-    ).join("
-
-") || "";
-    navigator.clipboard.writeText(`[테마 추천 ${lastUpdated}]
-
-${text}
-
-📊 ${result.summary}`);
+      "[" + t.icon + " " + t.theme + "]" + nl +
+      "근거: " + t.reason + nl +
+      "출처: " + t.source + nl +
+      t.stocks.map((s, i) =>
+        (i+1) + ". " + s.name + " (" + s.code + ")" + nl +
+        "   └ " + s.reason + nl +
+        "   └ MF: " + s.mf_point + nl +
+        "   └ ⚠️ " + s.caution
+      ).join(nl)
+    ).join(nl + nl) || "";
+    navigator.clipboard.writeText(
+      "[테마 추천 " + lastUpdated + "]" + nl + nl +
+      text + nl + nl +
+      "📊 " + (result.summary || "")
+    );
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
