@@ -886,38 +886,16 @@ const ThemeRecommendTab = () => {
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const THEME_SYSTEM = `당신은 주식 투자 전문가입니다.
-웹 검색으로 최신 주식 방송, 증권사 리포트, 뉴스를 수집하여
-MF(MoveFutures) 투자 기준에 맞는 종목을 추천합니다.
+웹 검색으로 최신 주식 방송, 증권사 리포트, 뉴스를 수집하여 종목을 추천합니다.
 
-추천 기준:
-1. 실시간 검색된 최신 방송/뉴스/리포트에서 언급된 종목 우선
-2. 방향성이 있는 종목 (상승추세)
-3. 테마가 명확한 종목
-4. 당일 급등보다 눌림 후 반등 가능한 종목 선호
+절대 규칙: 응답은 반드시 순수한 JSON만 출력하세요.
+- 설명 텍스트 금지
+- 마크다운 코드블록(백틱) 금지
+- JSON 앞뒤에 어떤 문자도 추가 금지
+- 첫 글자는 반드시 { 이어야 합니다
 
-반드시 JSON 형식으로만 응답하세요:
-{
-  "date": "날짜",
-  "themes": [
-    {
-      "theme": "테마명",
-      "icon": "이모지",
-      "reason": "이 테마가 주목받는 이유 (검색된 뉴스/방송 근거)",
-      "source": "출처 (방송명/언론사)",
-      "stocks": [
-        {
-          "name": "종목명",
-          "code": "종목코드(한국은 6자리, 미국은 티커)",
-          "reason": "이 종목이 테마에서 주목받는 이유",
-          "price_info": "현재가 또는 최근 주가 정보",
-          "mf_point": "MF 관점 주목 포인트",
-          "caution": "주의사항"
-        }
-      ]
-    }
-  ],
-  "summary": "오늘 전체 시장 한줄 요약"
-}`;
+출력할 JSON 구조:
+{"date":"날짜","themes":[{"theme":"테마명","icon":"이모지","reason":"주목이유","source":"출처","stocks":[{"name":"종목명","code":"코드","reason":"선정이유","price_info":"주가정보","mf_point":"MF포인트","caution":"주의사항"}]}],"summary":"시장요약"}`;
 
   const generate = async () => {
     setLoading(true); setResult(null);
@@ -945,13 +923,25 @@ JSON 형식으로만 응답하세요.`;
         [{ role: "user", content: prompt }],
         THEME_SYSTEM, 4000
       );
-      const clean = r.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
-      setResult(parsed);
-      setLastUpdated(new Date().toLocaleTimeString("ko-KR"));
+      // JSON 추출 강화: { 로 시작해서 } 로 끝나는 부분만 파싱
+      let clean = r.replace(/```json|```/g, "").trim();
+      // 혹시 앞에 텍스트가 있으면 첫 { 부터 마지막 } 까지만 추출
+      const jsonStart = clean.indexOf("{");
+      const jsonEnd = clean.lastIndexOf("}");
+      if (jsonStart !== -1 && jsonEnd !== -1) {
+        clean = clean.slice(jsonStart, jsonEnd + 1);
+      }
+      try {
+        const parsed = JSON.parse(clean);
+        setResult(parsed);
+        setLastUpdated(new Date().toLocaleTimeString("ko-KR"));
+      } catch(parseErr) {
+        // JSON 파싱 실패 시 원본 텍스트를 raw로 표시
+        setResult({ raw: r, error: null });
+        setLastUpdated(new Date().toLocaleTimeString("ko-KR"));
+      }
     } catch(e) {
-      // JSON 파싱 실패 시 텍스트로 표시
-      setResult({ error: e.message, raw: e.message });
+      setResult({ error: e.message });
     }
     setLoading(false);
   };
@@ -1105,6 +1095,17 @@ JSON 형식으로만 응답하세요.`;
           </div>
         )}
 
+        {/* raw 텍스트 표시 (JSON 파싱 실패 시) */}
+        {result?.raw && !result?.themes && (
+          <div style={{ background:T.surface, borderRadius:12, padding:16, border:`1px solid ${T.border}`, marginBottom:20 }}>
+            <div style={{ fontSize:12, color:T.gold, fontWeight:700, marginBottom:10 }}>
+              📋 AI 분석 결과 (텍스트 형식)
+            </div>
+            <div style={{ fontSize:12, color:T.text, lineHeight:1.8, whiteSpace:"pre-wrap" }}>
+              {result.raw}
+            </div>
+          </div>
+        )}
         {/* 오류 */}
         {result?.error && (
           <div style={{ background:T.redDim, borderRadius:10, padding:14, border:`1px solid ${T.red}44` }}>
