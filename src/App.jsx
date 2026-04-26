@@ -199,6 +199,9 @@ const Ic = ({ n, s = 16 }) => {
     check: <polyline points="20 6 9 17 4 12"/>,
     refresh: <><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></>,
     star: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>,
+    flame: <><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></>,
+    bell: <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,
+    add: <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></>,
   };
   return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{d[n]}</svg>;
 };
@@ -873,7 +876,249 @@ MF 3단계 분석(방향성→딛는자리→리스크)을 포함한 포스팅 �
 };
 
 // ══════════════════════════════════════════════════════════════
-// 탭4: 관심 종목 추적
+// 탭4: 테마 추천 (실시간 검색 기반)
+// ══════════════════════════════════════════════════════════════
+const ThemeRecommendTab = () => {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [market, setMarket] = useState("KR");
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const THEME_SYSTEM = `당신은 주식 투자 전문가입니다.
+웹 검색으로 최신 주식 방송, 증권사 리포트, 뉴스를 수집하여
+MF(MoveFutures) 투자 기준에 맞는 종목을 추천합니다.
+
+추천 기준:
+1. 실시간 검색된 최신 방송/뉴스/리포트에서 언급된 종목 우선
+2. 방향성이 있는 종목 (상승추세)
+3. 테마가 명확한 종목
+4. 당일 급등보다 눌림 후 반등 가능한 종목 선호
+
+반드시 JSON 형식으로만 응답하세요:
+{
+  "date": "날짜",
+  "themes": [
+    {
+      "theme": "테마명",
+      "icon": "이모지",
+      "reason": "이 테마가 주목받는 이유 (검색된 뉴스/방송 근거)",
+      "source": "출처 (방송명/언론사)",
+      "stocks": [
+        {
+          "name": "종목명",
+          "code": "종목코드(한국은 6자리, 미국은 티커)",
+          "reason": "이 종목이 테마에서 주목받는 이유",
+          "price_info": "현재가 또는 최근 주가 정보",
+          "mf_point": "MF 관점 주목 포인트",
+          "caution": "주의사항"
+        }
+      ]
+    }
+  ],
+  "summary": "오늘 전체 시장 한줄 요약"
+}`;
+
+  const generate = async () => {
+    setLoading(true); setResult(null);
+    const today = new Date().toLocaleDateString("ko-KR", { year:"numeric", month:"long", day:"numeric", weekday:"long" });
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("ko-KR", { month:"long", day:"numeric" });
+
+    const prompt = `오늘(${today}) 장 마감 후 내일 아침 주목할 ${market === "KR" ? "한국" : "미국"} 주식 테마 3개와 테마별 종목 3개씩 추천해주세요.
+
+먼저 웹 검색으로 다음을 수집하세요:
+- "${yesterday} 주식 방송 추천 종목" 또는 "오늘 주식 방송 테마"
+- "장 마감 후 주목 종목 ${yesterday}"
+- "${market === "KR" ? "한국 코스피 코스닥" : "미국 나스닥 뉴욕증시"} 오늘 테마 종목"
+- 증권사 데일리 리포트 또는 유튜브 주식 방송 내용
+- 오늘 급등 테마 또는 내일 기대 테마
+
+검색 결과를 바탕으로:
+1. 오늘 방송/뉴스에서 실제로 언급된 테마 3개 선정
+2. 각 테마별 대표 종목 3개 (방송/리포트 근거)
+3. MF 투자 관점의 매매 포인트
+
+JSON 형식으로만 응답하세요.`;
+
+    try {
+      const r = await callClaudeWithSearch(
+        [{ role: "user", content: prompt }],
+        THEME_SYSTEM, 4000
+      );
+      const clean = r.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      setResult(parsed);
+      setLastUpdated(new Date().toLocaleTimeString("ko-KR"));
+    } catch(e) {
+      // JSON 파싱 실패 시 텍스트로 표시
+      setResult({ error: e.message, raw: e.message });
+    }
+    setLoading(false);
+  };
+
+  const copyAll = () => {
+    if (!result) return;
+    const text = result.themes?.map(t =>
+      `[${t.icon} ${t.theme}]
+근거: ${t.reason}
+출처: ${t.source}
+` +
+      t.stocks.map((s, i) => `${i+1}. ${s.name} (${s.code})
+   └ ${s.reason}
+   └ MF: ${s.mf_point}
+   └ ⚠️ ${s.caution}`).join("
+")
+    ).join("
+
+") || "";
+    navigator.clipboard.writeText(`[테마 추천 ${lastUpdated}]
+
+${text}
+
+📊 ${result.summary}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const gradeColor = (g) => g === "A" ? T.green : g === "B" ? T.gold : T.red;
+
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      <div style={{ flex:1, overflowY:"auto", padding:14 }}>
+
+        {/* 헤더 설명 */}
+        <div style={{ background:T.surface, borderRadius:12, padding:14, marginBottom:12, border:`1px solid ${T.border}` }}>
+          <div style={{ fontSize:10, color:T.green, fontWeight:700, letterSpacing:1.2, marginBottom:8 }}>📡 실시간 테마 추천</div>
+          <div style={{ fontSize:12, color:T.textMuted, lineHeight:1.7 }}>
+            주식 방송·뉴스·증권사 리포트를 실시간 검색해서<br/>
+            내일 아침 주목할 테마 3개 + 종목 3개씩 추천해드려요.
+          </div>
+        </div>
+
+        {/* 시장 선택 */}
+        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+          {[["KR","🇰🇷 한국"], ["US","🇺🇸 미국"]].map(([v, label]) => (
+            <button key={v} onClick={() => setMarket(v)} style={{
+              flex:1, padding:"10px 0",
+              background: market===v ? T.greenDim : "transparent",
+              border:`1px solid ${market===v ? T.green : T.border}`, borderRadius:10,
+              color: market===v ? T.green : T.textMuted, fontSize:13,
+              cursor:"pointer", fontFamily:"inherit", fontWeight: market===v ? 700 : 400,
+            }}>{label}</button>
+          ))}
+        </div>
+
+        {/* 생성 버튼 */}
+        <button onClick={generate} disabled={loading} style={{
+          width:"100%", padding:"14px 0", marginBottom:14,
+          background: !loading ? `linear-gradient(135deg, #2a0066, #8844ff)` : T.border,
+          border:"none", borderRadius:12,
+          color: !loading ? "#f0e8ff" : T.textDim,
+          fontSize:15, fontWeight:800, cursor:!loading?"pointer":"not-allowed",
+          fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+        }}>
+          {loading
+            ? <><div style={{ animation:"spin 1s linear infinite" }}><Ic n="spin" s={16}/></div>방송·뉴스 검색 중... (30~40초)</>
+            : <><Ic n="flame" s={16}/>오늘 테마 추천 받기 (실시간 검색)</>
+          }
+        </button>
+
+        {/* 결과 */}
+        {result && !result.error && (
+          <div>
+            {/* 헤더 */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+              <div>
+                <div style={{ fontSize:12, color:T.green, fontWeight:700 }}>📊 테마 추천 결과</div>
+                {lastUpdated && <div style={{ fontSize:10, color:T.textDim, marginTop:2 }}>검색 완료: {lastUpdated}</div>}
+              </div>
+              <button onClick={copyAll} style={{
+                background:copied?T.greenDim:"transparent", border:`1px solid ${T.border}`,
+                borderRadius:7, padding:"5px 10px", color:copied?T.green:T.textMuted,
+                cursor:"pointer", fontSize:11, fontFamily:"inherit",
+                display:"flex", alignItems:"center", gap:4,
+              }}>
+                {copied ? <><Ic n="check" s={12}/>복사됨</> : <><Ic n="copy" s={12}/>전체 복사</>}
+              </button>
+            </div>
+
+            {/* 요약 */}
+            {result.summary && (
+              <div style={{ background:T.surface, borderRadius:10, padding:"11px 14px", marginBottom:14, border:`1px solid ${T.border}` }}>
+                <div style={{ fontSize:11, color:T.textMuted }}>📌 {result.summary}</div>
+              </div>
+            )}
+
+            {/* 테마별 카드 */}
+            {result.themes?.map((theme, ti) => (
+              <div key={ti} style={{ background:T.surface, borderRadius:14, padding:16, marginBottom:14, border:`1px solid ${T.border}` }}>
+                {/* 테마 헤더 */}
+                <div style={{ marginBottom:12, paddingBottom:10, borderBottom:`1px solid ${T.border}` }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                    <span style={{ fontSize:22 }}>{theme.icon}</span>
+                    <div>
+                      <div style={{ fontSize:15, fontWeight:800, color:T.text }}>{theme.theme}</div>
+                      <div style={{ fontSize:10, color:T.green }}>출처: {theme.source}</div>
+                    </div>
+                    <div style={{ marginLeft:"auto", background:"#8844ff22", border:"1px solid #8844ff44", borderRadius:6, padding:"2px 8px", fontSize:10, color:"#bb88ff" }}>
+                      테마 {ti+1}
+                    </div>
+                  </div>
+                  <div style={{ fontSize:11, color:T.textMuted, lineHeight:1.6 }}>{theme.reason}</div>
+                </div>
+
+                {/* 종목 리스트 */}
+                {theme.stocks?.map((stock, si) => (
+                  <div key={si} style={{ marginBottom: si < theme.stocks.length-1 ? 10 : 0, background:T.surface2, borderRadius:10, padding:12, border:`1px solid ${T.borderLight}` }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                      <div style={{ width:22, height:22, borderRadius:6, background:"#8844ff22", border:"1px solid #8844ff44", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:"#bb88ff", flexShrink:0 }}>
+                        {si+1}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <span style={{ fontSize:14, fontWeight:800, color:T.text }}>{stock.name}</span>
+                        <span style={{ fontSize:10, color:T.textDim, marginLeft:6, background:T.border, padding:"1px 5px", borderRadius:3 }}>{stock.code}</span>
+                      </div>
+                      {stock.price_info && (
+                        <div style={{ fontSize:11, color:T.gold }}>{stock.price_info}</div>
+                      )}
+                    </div>
+                    <div style={{ fontSize:11, color:T.textMuted, lineHeight:1.65, marginBottom:5 }}>
+                      {stock.reason}
+                    </div>
+                    <div style={{ background:T.greenDim, borderRadius:6, padding:"5px 9px", marginBottom:5, fontSize:11, color:T.green }}>
+                      📊 MF: {stock.mf_point}
+                    </div>
+                    <div style={{ background:T.redDim, borderRadius:6, padding:"5px 9px", fontSize:11, color:T.red }}>
+                      ⚠️ {stock.caution}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+
+            {/* 면책 */}
+            <div style={{ background:T.surface, borderRadius:10, padding:"10px 13px", marginBottom:20, border:`1px solid ${T.border}` }}>
+              <div style={{ fontSize:10, color:T.textDim, lineHeight:1.7 }}>
+                ※ 본 추천은 AI가 수집한 방송·뉴스 기반이며 실제 투자 판단은 본인 책임입니다.<br/>
+                반드시 MF 3단계 분석 후 진입 여부를 결정하세요.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 오류 */}
+        {result?.error && (
+          <div style={{ background:T.redDim, borderRadius:10, padding:14, border:`1px solid ${T.red}44` }}>
+            <div style={{ fontSize:12, color:T.red }}>❌ {result.error}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════
+// 탭5: 관심 종목 추적
 // ══════════════════════════════════════════════════════════════
 const WatchlistTab = () => {
   const [watchlist, setWatchlist] = useState(() => {
@@ -1005,10 +1250,11 @@ export default function App() {
   const [tab, setTab] = useState("mf");
 
   const tabs = [
-    { id: "mf", icon: <Ic n="mf" s={18} />, label: "MF 분석" },
-    { id: "briefing", icon: <Ic n="chart" s={18} />, label: "시황" },
-    { id: "posting", icon: <Ic n="post" s={18} />, label: "포스팅" },
-    { id: "watchlist", icon: <Ic n="star" s={18} />, label: "관심종목" },
+    { id: "mf",        icon: <Ic n="mf"    s={18}/>, label: "MF 분석" },
+    { id: "theme",     icon: <Ic n="flame" s={18}/>, label: "테마추천" },
+    { id: "briefing",  icon: <Ic n="chart" s={18}/>, label: "시황" },
+    { id: "posting",   icon: <Ic n="post"  s={18}/>, label: "포스팅" },
+    { id: "watchlist", icon: <Ic n="star"  s={18}/>, label: "관심종목" },
   ];
 
   return (
@@ -1029,9 +1275,10 @@ export default function App() {
 
       {/* 컨텐츠 */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {tab === "mf" && <MFAnalysisTab />}
-        {tab === "briefing" && <BriefingTab />}
-        {tab === "posting" && <PostingTab />}
+        {tab === "mf"        && <MFAnalysisTab />}
+        {tab === "theme"     && <ThemeRecommendTab />}
+        {tab === "briefing"  && <BriefingTab />}
+        {tab === "posting"   && <PostingTab />}
         {tab === "watchlist" && <WatchlistTab />}
       </div>
 
