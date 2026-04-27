@@ -165,7 +165,7 @@ MF(MoveFutures) 분석을 위해 차트에서 다음을 읽어주세요:
     method: "POST",
     headers,
     body: JSON.stringify({
-      model: MODEL,
+      model: SONNET,
       max_tokens: 1000,
       messages: [{
         role: "user",
@@ -1361,7 +1361,11 @@ export default function App() {
       <div style={{ background: T.surface, borderBottom: `1px solid ${T.border}`, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, paddingTop: "calc(10px + env(safe-area-inset-top,0px))" }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: T.green, letterSpacing: 2, lineHeight: 1, fontFamily: "monospace" }}>MF STOCK</div>
-          <div style={{ fontSize: 8, color: T.textDim, letterSpacing: 2 }}>AI SEMICONDUCTOR AGENT</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+            <div style={{ fontSize: 8, color: T.textDim, letterSpacing: 2 }}>AI SEMICONDUCTOR AGENT</div>
+            <div style={{ background: T.greenDim, border: `1px solid ${T.green}44`, borderRadius: 3, padding: "1px 5px", fontSize: 8, color: T.green, fontFamily: "monospace", letterSpacing: 0.5 }}>v10</div>
+            <div style={{ fontSize: 8, color: T.textDim }}>2026.04.27</div>
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 10, color: T.textDim }}>
