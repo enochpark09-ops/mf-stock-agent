@@ -81,19 +81,20 @@ const callHaiku = async (messages, system, max_tokens = 1500) => {
   return data.content?.[0]?.text || "";
 };
 
-// 웹검색 포함 호출 (Haiku - 시황·포스팅·테마추천용)
-const callClaudeWithSearch = async (messages, system, max_tokens = 2000) => {
+// 웹검색 포함 호출 (model 파라미터로 분리)
+// 시황·포스팅 → Haiku / 테마추천 → Sonnet
+const callClaudeWithSearch = async (messages, system, max_tokens = 2000, model = HAIKU) => {
   const headers = getHeaders();
   let currentMessages = [...messages];
   let iterations = 0;
 
-  while (iterations < 5) {
+  while (iterations < 6) {
     iterations++;
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: HAIKU,
+        model,
         max_tokens,
         system,
         tools: [{ type: "web_search_20250305", name: "web_search" }],
@@ -115,7 +116,7 @@ const callClaudeWithSearch = async (messages, system, max_tokens = 2000) => {
       const toolResults = toolUses.map(tu => ({
         type: "tool_result",
         tool_use_id: tu.id,
-        content: "검색 완료. 결과를 바탕으로 계속하세요.",
+        content: "검색 완료. 검색 결과를 바탕으로 분석을 계속하세요.",
       }));
       currentMessages = [
         ...currentMessages,
@@ -968,16 +969,20 @@ const ThemeRecommendTab = () => {
   }, [market]);
 
   const THEME_SYSTEM = `당신은 주식 투자 전문가입니다.
-웹 검색으로 최신 주식 방송, 증권사 리포트, 뉴스를 수집하여 종목을 추천합니다.
 
-절대 규칙: 응답은 반드시 순수한 JSON만 출력하세요.
-- 설명 텍스트 금지
-- 마크다운 코드블록(백틱) 금지
-- JSON 앞뒤에 어떤 문자도 추가 금지
-- 첫 글자는 반드시 { 이어야 합니다
+작업 순서:
+1. 웹 검색 도구로 오늘 주식 방송·뉴스·증권사 리포트를 실제로 검색하세요
+2. 검색 결과를 분석하여 테마 3개와 종목 3개씩 선정하세요
+3. 반드시 아래 JSON 형식으로만 최종 답변하세요
 
-출력할 JSON 구조:
-{"date":"날짜","themes":[{"theme":"테마명","icon":"이모지","reason":"주목이유","source":"출처","stocks":[{"name":"종목명","code":"코드","reason":"선정이유","price_info":"주가정보","mf_point":"MF포인트","caution":"주의사항"}]}],"summary":"시장요약"}`;
+절대 규칙:
+- 최종 응답은 { 로 시작하는 순수 JSON만 출력
+- 설명 문장, 마크다운 백틱, 코드블록 일체 금지
+- "웹 검색으로 수집하겠습니다" 같은 의도 표현 금지
+- 검색 후 바로 JSON 출력
+
+JSON 형식:
+{"date":"오늘날짜","themes":[{"theme":"테마명","icon":"이모지","reason":"뉴스/방송 근거","source":"출처매체","stocks":[{"name":"종목명","code":"종목코드","reason":"선정이유","price_info":"주가정보","mf_point":"MF매매포인트","caution":"주의사항"}]}],"summary":"오늘시장한줄요약"}`;
 
   const generate = async () => {
     setLoading(true); setResult(null);
@@ -998,12 +1003,13 @@ const ThemeRecommendTab = () => {
 2. 각 테마별 대표 종목 3개 (방송/리포트 근거)
 3. MF 투자 관점의 매매 포인트
 
-JSON 형식으로만 응답하세요.`;
+검색 완료 후 즉시 JSON만 출력하세요. 설명 문장 금지.`;
 
     try {
+      // 테마추천은 복잡한 검색+JSON 처리 → Sonnet 사용
       const r = await callClaudeWithSearch(
         [{ role: "user", content: prompt }],
-        THEME_SYSTEM, 4000
+        THEME_SYSTEM, 3000, SONNET
       );
       // JSON 추출 강화: { 로 시작해서 } 로 끝나는 부분만 파싱
       let clean = r.replace(/```json|```/g, "").trim();
