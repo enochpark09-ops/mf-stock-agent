@@ -968,73 +968,73 @@ const ThemeRecommendTab = () => {
     else { setResult(null); setFromCache(false); }
   }, [market]);
 
-  const THEME_SYSTEM = `당신은 주식 투자 전문가입니다.
+  // ── 2단계 방식: 검색 → JSON 변환 분리 ────────────────────────
+  // STEP 1: 웹검색으로 시황 텍스트 수집 (Sonnet + 검색)
+  // STEP 2: 수집된 텍스트를 JSON으로 변환 (Sonnet, 검색 없음)
+  // → JSON 파싱 실패 원인이었던 "검색+JSON 동시 처리" 문제 해결
 
-작업 순서:
-1. 웹 검색 도구로 오늘 주식 방송·뉴스·증권사 리포트를 실제로 검색하세요
-2. 검색 결과를 분석하여 테마 3개와 종목 3개씩 선정하세요
-3. 반드시 아래 JSON 형식으로만 최종 답변하세요
+  const SEARCH_SYSTEM = `당신은 주식 시황 조사 전문가입니다.
+웹 검색을 통해 오늘 주식 시장의 주요 테마와 종목 정보를 수집하세요.
+수집한 내용을 자연스러운 텍스트로 정리해서 알려주세요.
+테마명, 관련 종목, 뉴스/방송 출처를 포함하세요.`;
 
-절대 규칙:
-- 최종 응답은 { 로 시작하는 순수 JSON만 출력
-- 설명 문장, 마크다운 백틱, 코드블록 일체 금지
-- "웹 검색으로 수집하겠습니다" 같은 의도 표현 금지
-- 검색 후 바로 JSON 출력
-
-JSON 형식:
-{"date":"오늘날짜","themes":[{"theme":"테마명","icon":"이모지","reason":"뉴스/방송 근거","source":"출처매체","stocks":[{"name":"종목명","code":"종목코드","reason":"선정이유","price_info":"주가정보","mf_point":"MF매매포인트","caution":"주의사항"}]}],"summary":"오늘시장한줄요약"}`;
+  const JSON_SYSTEM = `당신은 데이터 변환 전문가입니다.
+제공된 주식 시황 텍스트를 아래 JSON 형식으로 변환하세요.
+절대 규칙: { 로 시작하는 순수 JSON만 출력. 다른 텍스트 일체 금지.
+JSON:
+{"date":"날짜","themes":[{"theme":"테마명","icon":"이모지","reason":"주목이유","source":"출처","stocks":[{"name":"종목명","code":"코드","reason":"선정이유","price_info":"주가정보","mf_point":"MF관점","caution":"주의사항"}]}],"summary":"시장요약"}`;
 
   const generate = async () => {
     setLoading(true); setResult(null);
     const today = new Date().toLocaleDateString("ko-KR", { year:"numeric", month:"long", day:"numeric", weekday:"long" });
-    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("ko-KR", { month:"long", day:"numeric" });
-
-    const prompt = `오늘(${today}) 장 마감 후 내일 아침 주목할 ${market === "KR" ? "한국" : "미국"} 주식 테마 3개와 테마별 종목 3개씩 추천해주세요.
-
-먼저 웹 검색으로 다음을 수집하세요:
-- "${yesterday} 주식 방송 추천 종목" 또는 "오늘 주식 방송 테마"
-- "장 마감 후 주목 종목 ${yesterday}"
-- "${market === "KR" ? "한국 코스피 코스닥" : "미국 나스닥 뉴욕증시"} 오늘 테마 종목"
-- 증권사 데일리 리포트 또는 유튜브 주식 방송 내용
-- 오늘 급등 테마 또는 내일 기대 테마
-
-검색 결과를 바탕으로:
-1. 오늘 방송/뉴스에서 실제로 언급된 테마 3개 선정
-2. 각 테마별 대표 종목 3개 (방송/리포트 근거)
-3. MF 투자 관점의 매매 포인트
-
-검색 완료 후 즉시 JSON만 출력하세요. 설명 문장 금지.`;
+    const mkt = market === "KR" ? "한국 코스피 코스닥" : "미국 나스닥 뉴욕증시";
 
     try {
-      // 테마추천은 복잡한 검색+JSON 처리 → Sonnet 사용
-      const r = await callClaudeWithSearch(
-        [{ role: "user", content: prompt }],
-        THEME_SYSTEM, 3000, SONNET
+      // STEP 1: 웹 검색으로 시황 수집 (텍스트로 받기)
+      const searchPrompt = `오늘(${today}) ${mkt} 주식 시장에서 주목할 테마 3개와 테마별 종목 3개씩을 조사해주세요.
+다음 키워드로 검색하세요:
+- "${today.slice(0,10)} 주식 테마 종목"
+- "${mkt} 오늘 급등 테마"
+- "내일 주목 종목 ${mkt}"
+- "증권사 추천 종목 오늘"
+
+검색 결과를 바탕으로 테마명, 관련 종목, 뉴스 출처를 텍스트로 정리해주세요.`;
+
+      const searchResult = await callClaudeWithSearch(
+        [{ role: "user", content: searchPrompt }],
+        SEARCH_SYSTEM, 2000, SONNET
       );
-      // JSON 추출 강화: { 로 시작해서 } 로 끝나는 부분만 파싱
-      let clean = r.replace(/```json|```/g, "").trim();
-      // 혹시 앞에 텍스트가 있으면 첫 { 부터 마지막 } 까지만 추출
+
+      // STEP 2: 수집된 텍스트 → JSON 변환 (검색 없이)
+      const jsonPrompt = `아래 주식 시황 정보를 JSON으로 변환하세요. 오늘 날짜: ${today}
+
+=== 수집된 시황 정보 ===
+${searchResult}
+========================
+
+위 내용을 JSON으로 변환하세요. 정보가 부족한 필드는 합리적으로 추정해서 채우세요.`;
+
+      const jsonResult = await callClaude(
+        [{ role: "user", content: jsonPrompt }],
+        JSON_SYSTEM, 2000, SONNET
+      );
+
+      // JSON 파싱
+      let clean = jsonResult.replace(/```json|```/g, "").trim();
       const jsonStart = clean.indexOf("{");
       const jsonEnd = clean.lastIndexOf("}");
-      if (jsonStart !== -1 && jsonEnd !== -1) {
-        clean = clean.slice(jsonStart, jsonEnd + 1);
-      }
-      try {
-        const parsed = JSON.parse(clean);
-        const timeStr = new Date().toLocaleTimeString("ko-KR");
-        setResult(parsed);
-        setLastUpdated(timeStr);
-        setFromCache(false);
-        cache.set("theme_" + market, { data: parsed, time: timeStr });
-      } catch(parseErr) {
-        // JSON 파싱 실패 시 원본 텍스트를 raw로 표시
-        const timeStr2 = new Date().toLocaleTimeString("ko-KR");
-        setResult({ raw: r, error: null });
-        setLastUpdated(timeStr2);
-        setFromCache(false);
-      }
+      if (jsonStart === -1 || jsonEnd === -1) throw new Error("JSON 추출 실패");
+      clean = clean.slice(jsonStart, jsonEnd + 1);
+
+      const parsed = JSON.parse(clean);
+      const timeStr = new Date().toLocaleTimeString("ko-KR");
+      setResult(parsed);
+      setLastUpdated(timeStr);
+      setFromCache(false);
+      cache.set("theme_" + market, { data: parsed, time: timeStr });
+
     } catch(e) {
-      setResult({ error: e.message });
+      setResult({ error: `분석 오류: ${e.message}` });
     }
     setLoading(false);
   };
@@ -1199,15 +1199,11 @@ JSON 형식:
           </div>
         )}
 
-        {/* raw 텍스트 표시 (JSON 파싱 실패 시) */}
-        {result?.raw && !result?.themes && (
+        {/* 결과 없음 안내 */}
+        {result?.error === null && !result?.themes && (
           <div style={{ background:T.surface, borderRadius:12, padding:16, border:`1px solid ${T.border}`, marginBottom:20 }}>
-            <div style={{ fontSize:12, color:T.gold, fontWeight:700, marginBottom:10 }}>
-              📋 AI 분석 결과 (텍스트 형식)
-            </div>
-            <div style={{ fontSize:12, color:T.text, lineHeight:1.8, whiteSpace:"pre-wrap" }}>
-              {result.raw}
-            </div>
+            <div style={{ fontSize:12, color:T.gold, fontWeight:700, marginBottom:8 }}>⚠️ 분석 데이터 부족</div>
+            <div style={{ fontSize:12, color:T.textMuted, lineHeight:1.8 }}>오늘 시장 데이터가 충분하지 않습니다. 장 마감 후 다시 시도해주세요.</div>
           </div>
         )}
         {/* 오류 */}
@@ -1369,8 +1365,8 @@ export default function App() {
           <div style={{ fontSize: 14, fontWeight: 800, color: T.green, letterSpacing: 2, lineHeight: 1, fontFamily: "monospace" }}>MF STOCK</div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
             <div style={{ fontSize: 8, color: T.textDim, letterSpacing: 2 }}>AI SEMICONDUCTOR AGENT</div>
-            <div style={{ background: T.greenDim, border: `1px solid ${T.green}44`, borderRadius: 3, padding: "1px 5px", fontSize: 8, color: T.green, fontFamily: "monospace", letterSpacing: 0.5 }}>v10</div>
-            <div style={{ fontSize: 8, color: T.textDim }}>2026.04.27</div>
+            <div style={{ background: T.greenDim, border: `1px solid ${T.green}44`, borderRadius: 3, padding: "1px 5px", fontSize: 8, color: T.green, fontFamily: "monospace", letterSpacing: 0.5 }}>v11</div>
+            <div style={{ fontSize: 8, color: T.textDim }}>2026.04.30</div>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
